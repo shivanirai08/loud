@@ -114,7 +114,7 @@ class AlarmSchedulerModule(reactContext: ReactApplicationContext) :
             val packageName = context.packageName
 
             // Use currentActivity for launching — MIUI/HyperOS often blocks startActivity from non-Activity context
-            val activity = currentActivity
+            val activity = reactApplicationContext.currentActivity
 
             // Build list of intents to try, ordered by specificity
             val intents = mutableListOf<Intent>()

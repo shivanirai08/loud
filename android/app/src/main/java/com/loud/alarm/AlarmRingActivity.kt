@@ -38,6 +38,15 @@ class AlarmRingActivity : ReactActivity() {
     }
 
     override fun createReactActivityDelegate(): ReactActivityDelegate {
-        return DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
+        return object : DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled) {
+            override fun getLaunchOptions(): Bundle? {
+                val extras = intent?.extras
+                val props = Bundle()
+                props.putString("alarmId", extras?.getString(AlarmReceiver.EXTRA_ALARM_ID) ?: "")
+                props.putString("alarmText", extras?.getString(AlarmReceiver.EXTRA_ALARM_TEXT) ?: "Alarm!")
+                props.putString("alarmLanguage", extras?.getString(AlarmReceiver.EXTRA_ALARM_LANGUAGE) ?: "en-US")
+                return props
+            }
+        }
     }
 }

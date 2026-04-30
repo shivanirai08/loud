@@ -16,12 +16,12 @@ class NotificationService {
       );
     }
 
-    // Create notification channel
+    // Create notification channel (no sound - TTS handles audio)
     this.channelId = await notifee.createChannel({
       id: 'loud_alarm_channel',
       name: 'Loud Alarm',
       importance: AndroidImportance.HIGH,
-      sound: 'default',
+      sound: '',
       vibration: true,
       bypassDnd: true,
       visibility: AndroidVisibility.PUBLIC,

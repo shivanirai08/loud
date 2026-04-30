@@ -21,7 +21,8 @@ class AlarmReceiver : BroadcastReceiver() {
         val alarmText = intent.getStringExtra(EXTRA_ALARM_TEXT) ?: "Alarm!"
         val alarmLanguage = intent.getStringExtra(EXTRA_ALARM_LANGUAGE) ?: "en-US"
 
-        // Start foreground service to play alarm
+        // Start foreground service to play alarm (TTS + vibration)
+        // The service's notification has fullScreenIntent which will launch AlarmRingActivity
         val serviceIntent = Intent(context, AlarmForegroundService::class.java).apply {
             putExtra(EXTRA_ALARM_ID, alarmId)
             putExtra(EXTRA_ALARM_TEXT, alarmText)
@@ -34,13 +35,21 @@ class AlarmReceiver : BroadcastReceiver() {
             context.startService(serviceIntent)
         }
 
-        // Launch the alarm ring activity
-        val activityIntent = Intent(context, AlarmRingActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            putExtra(EXTRA_ALARM_ID, alarmId)
-            putExtra(EXTRA_ALARM_TEXT, alarmText)
-            putExtra(EXTRA_ALARM_LANGUAGE, alarmLanguage)
+        // Also try to launch the activity directly (works when app has SYSTEM_ALERT_WINDOW
+        // or when launched from an alarm clock PendingIntent on some devices)
+        try {
+            val activityIntent = Intent(context, AlarmRingActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+                putExtra(EXTRA_ALARM_ID, alarmId)
+                putExtra(EXTRA_ALARM_TEXT, alarmText)
+                putExtra(EXTRA_ALARM_LANGUAGE, alarmLanguage)
+            }
+            context.startActivity(activityIntent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not start activity directly (expected on Android 10+): ${e.message}")
+            // This is fine - the fullScreenIntent in the notification will handle it
         }
-        context.startActivity(activityIntent)
     }
 }

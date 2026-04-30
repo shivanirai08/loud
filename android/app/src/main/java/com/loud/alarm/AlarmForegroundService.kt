@@ -4,8 +4,8 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
-import android.media.MediaPlayer
-import android.media.RingtoneManager
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.*
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -22,7 +22,6 @@ class AlarmForegroundService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_SNOOZE = "com.loud.alarm.ACTION_SNOOZE"
     }
 
-    private var mediaPlayer: MediaPlayer? = null
     private var tts: TextToSpeech? = null
     private var alarmText: String = "Alarm!"
     private var alarmLanguage: String = "en-US"
@@ -32,10 +31,13 @@ class AlarmForegroundService : Service(), TextToSpeech.OnInitListener {
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
     private var ttsLoopRunnable: Runnable? = null
+    private var audioManager: AudioManager? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         tts = TextToSpeech(this, this)
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
     }
@@ -64,17 +66,47 @@ class AlarmForegroundService : Service(), TextToSpeech.OnInitListener {
         )
         wakeLock?.acquire(10 * 60 * 1000L) // 10 minutes max
 
-        // Start foreground with notification
+        // Request audio focus for alarm
+        requestAudioFocus()
+
+        // Set volume to max for alarm stream
+        try {
+            val maxVolume = audioManager?.getStreamMaxVolume(AudioManager.STREAM_ALARM) ?: 7
+            audioManager?.setStreamVolume(AudioManager.STREAM_ALARM, maxVolume, 0)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not set alarm volume: ${e.message}")
+        }
+
+        // Start foreground with notification (includes fullScreenIntent)
         val notification = buildNotification()
         startForeground(NOTIFICATION_ID, notification)
-
-        // Start ringtone
-        startRingtone()
 
         // Start vibration
         startVibration()
 
+        // TTS will start speaking once initialized (via onInit callback)
+        // If TTS is already initialized (service reused), start immediately
+        if (isTtsReady) {
+            startTtsLoop()
+        }
+
         return START_STICKY
+    }
+
+    private fun requestAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val attrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+            audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                .setAudioAttributes(attrs)
+                .build()
+            audioManager?.requestAudioFocus(audioFocusRequest!!)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager?.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+        }
     }
 
     override fun onInit(status: Int) {
@@ -89,10 +121,21 @@ class AlarmForegroundService : Service(), TextToSpeech.OnInitListener {
                 Log.e(TAG, "Language not supported, falling back to default")
                 tts?.setLanguage(Locale.US)
             }
+
+            // Set TTS to use alarm audio stream so it's loud
+            val params = Bundle()
+            params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_ALARM)
+            tts?.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+
             isTtsReady = true
             startTtsLoop()
         } else {
-            Log.e(TAG, "TTS initialization failed")
+            Log.e(TAG, "TTS initialization failed with status: $status")
         }
     }
 
@@ -100,8 +143,11 @@ class AlarmForegroundService : Service(), TextToSpeech.OnInitListener {
         if (!isTtsReady) return
 
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {}
+            override fun onStart(utteranceId: String?) {
+                Log.d(TAG, "TTS started speaking: $alarmText")
+            }
             override fun onDone(utteranceId: String?) {
+                Log.d(TAG, "TTS finished speaking, will repeat in 2s")
                 // Schedule next TTS after a short delay
                 ttsLoopRunnable = Runnable {
                     if (isTtsReady) {
@@ -111,43 +157,24 @@ class AlarmForegroundService : Service(), TextToSpeech.OnInitListener {
                 handler.postDelayed(ttsLoopRunnable!!, 2000)
             }
             override fun onError(utteranceId: String?) {
+                Log.e(TAG, "TTS error on utterance")
                 handler.postDelayed({
                     if (isTtsReady) speakText()
                 }, 3000)
             }
         })
 
-        // Start speaking after a brief delay (let ringtone play first)
-        handler.postDelayed({ speakText() }, 1500)
+        // Start speaking immediately
+        speakText()
     }
 
     private fun speakText() {
         if (!isTtsReady) return
+        Log.d(TAG, "Speaking alarm text: $alarmText")
         val params = Bundle()
         params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+        params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_ALARM)
         tts?.speak(alarmText, TextToSpeech.QUEUE_FLUSH, params, "alarm_utterance")
-    }
-
-    private fun startRingtone() {
-        try {
-            val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-
-            mediaPlayer = MediaPlayer().apply {
-                setDataSource(this@AlarmForegroundService, alarmUri)
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                isLooping = true
-                prepare()
-                start()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error starting ringtone: ${e.message}")
-        }
     }
 
     private fun startVibration() {
@@ -166,15 +193,16 @@ class AlarmForegroundService : Service(), TextToSpeech.OnInitListener {
         ttsLoopRunnable?.let { handler.removeCallbacks(it) }
         tts?.stop()
 
-        // Stop ringtone
-        mediaPlayer?.let {
-            if (it.isPlaying) it.stop()
-            it.release()
-        }
-        mediaPlayer = null
-
         // Stop vibration
         vibrator?.cancel()
+
+        // Release audio focus
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager?.abandonAudioFocus(null)
+        }
 
         // Release wake lock
         wakeLock?.let {
@@ -202,13 +230,28 @@ class AlarmForegroundService : Service(), TextToSpeech.OnInitListener {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        // Full-screen intent to launch AlarmRingActivity over lock screen
+        val fullScreenIntent = Intent(this, AlarmRingActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra(AlarmReceiver.EXTRA_ALARM_ID, alarmId)
+            putExtra(AlarmReceiver.EXTRA_ALARM_TEXT, alarmText)
+            putExtra(AlarmReceiver.EXTRA_ALARM_LANGUAGE, alarmLanguage)
+        }
+        val fullScreenPendingIntent = PendingIntent.getActivity(
+            this, 2, fullScreenIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Loud Alarm")
-            .setContentText(alarmText)
+            .setContentText("Speaking: $alarmText")
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
+            .setFullScreenIntent(fullScreenPendingIntent, true)
+            .setContentIntent(fullScreenPendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
             .addAction(android.R.drawable.ic_popup_reminder, "Snooze", snoozePendingIntent)
             .build()
@@ -224,6 +267,8 @@ class AlarmForegroundService : Service(), TextToSpeech.OnInitListener {
                 description = "Alarm notifications"
                 setBypassDnd(true)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                // No sound on channel - we use TTS instead
+                setSound(null, null)
             }
             val notificationManager = getSystemService(NotificationManager::class.java)
             notificationManager.createNotificationChannel(channel)

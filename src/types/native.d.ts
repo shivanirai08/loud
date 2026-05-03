@@ -19,6 +19,7 @@ declare module 'react-native' {
       ): Promise<boolean>;
       canScheduleExactAlarms(): Promise<boolean>;
       openExactAlarmSettings(): Promise<boolean>;
+      dismissAlarmActivity(): Promise<boolean>;
     };
   }
 }

@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { ttsService } from '../services/ttsService';
 import { VoiceLanguage } from '../types';
+import { useAlarmStore } from '../store';
 
 const { AlarmScheduler } = NativeModules;
 
@@ -32,14 +33,20 @@ export function AlarmRingScreenStandalone(props: any) {
   const text = props?.alarmText || props?.alarm_text || 'Alarm!';
   const language = (props?.alarmLanguage || props?.alarm_language || 'en-US') as VoiceLanguage;
   const snoozeDuration = 5; // default snooze
+  const markAlarmTriggered = useAlarmStore(state => state.markAlarmTriggered);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
+  const [isHandlingAction, setIsHandlingAction] = useState(false);
   const [currentTime, setCurrentTime] = useState(
     new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   );
 
   useEffect(() => {
+    if (alarmId) {
+      markAlarmTriggered(alarmId);
+    }
+
     // Update time every second
     const timer = setInterval(() => {
       setCurrentTime(
@@ -97,25 +104,35 @@ export function AlarmRingScreenStandalone(props: any) {
       shake.stop();
       ttsService.stopLoop();
     };
-  }, []);
+  }, [alarmId, language, markAlarmTriggered, pulseAnim, rotateAnim, text]);
 
   const handleStop = async () => {
+    if (isHandlingAction) return;
+    setIsHandlingAction(true);
     ttsService.stop();
+
     try {
       await AlarmScheduler.stopAlarmService();
+      await AlarmScheduler.dismissAlarmActivity();
     } catch (e) {
       console.error('Failed to stop alarm service:', e);
+      setIsHandlingAction(false);
     }
   };
 
   const handleSnooze = async () => {
+    if (isHandlingAction) return;
+    setIsHandlingAction(true);
     ttsService.stop();
+
     try {
       // Stop current alarm then schedule snooze
       const snoozeDurationMs = snoozeDuration * 60 * 1000;
       await AlarmScheduler.snoozeAlarm(alarmId, snoozeDurationMs, text, language);
+      await AlarmScheduler.dismissAlarmActivity();
     } catch (e) {
       console.error('Failed to snooze alarm:', e);
+      setIsHandlingAction(false);
     }
   };
 
@@ -145,18 +162,24 @@ export function AlarmRingScreenStandalone(props: any) {
 
       <View style={styles.buttonContainer}>
         <TouchableOpacity
-          style={styles.snoozeButton}
+          style={[styles.snoozeButton, isHandlingAction && styles.disabledButton]}
           onPress={handleSnooze}
+          disabled={isHandlingAction}
           activeOpacity={0.8}>
-          <Text style={styles.snoozeButtonText}>Snooze</Text>
+          <Text style={styles.snoozeButtonText}>
+            {isHandlingAction ? 'Working...' : 'Snooze'}
+          </Text>
           <Text style={styles.snoozeSubtext}>{snoozeDuration} min</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.stopButton}
+          style={[styles.stopButton, isHandlingAction && styles.disabledButton]}
           onPress={handleStop}
+          disabled={isHandlingAction}
           activeOpacity={0.8}>
-          <Text style={styles.stopButtonText}>Stop</Text>
+          <Text style={styles.stopButtonText}>
+            {isHandlingAction ? 'Working...' : 'Stop'}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -228,6 +251,9 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingVertical: 18,
     alignItems: 'center',
+  },
+  disabledButton: {
+    opacity: 0.7,
   },
   stopButtonText: {
     fontSize: 20,

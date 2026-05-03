@@ -1,10 +1,16 @@
 import Tts from 'react-native-tts';
 import { VoiceLanguage } from '../types';
 
+const LOOP_GAP_MS = 350;
+
 class TtsService {
   private isInitialized = false;
   private isSpeaking = false;
-  private loopInterval: ReturnType<typeof setInterval> | null = null;
+  private loopTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  private removeFinishListener(): void {
+    Tts.removeAllListeners('tts-finish');
+  }
 
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
@@ -40,10 +46,12 @@ class TtsService {
     await this.setLanguage(language);
     
     return new Promise((resolve) => {
-      Tts.speak(text);
+      this.removeFinishListener();
       Tts.addEventListener('tts-finish', () => {
+        this.removeFinishListener();
         resolve();
       });
+      Tts.speak(text);
     });
   }
 
@@ -53,34 +61,35 @@ class TtsService {
 
     const speakOnce = async () => {
       if (!this.isSpeaking) return;
+      await this.initialize();
       await this.setLanguage(language);
+      Tts.stop();
       Tts.speak(text);
     };
 
     // Speak immediately
-    speakOnce();
+    void speakOnce();
 
     // Set up listener to loop
     Tts.addEventListener('tts-finish', () => {
       if (this.isSpeaking) {
-        // Wait 2 seconds then speak again
-        this.loopInterval = setTimeout(() => {
+        this.loopTimeout = setTimeout(() => {
           if (this.isSpeaking) {
-            speakOnce();
+            void speakOnce();
           }
-        }, 2000) as unknown as ReturnType<typeof setInterval>;
+        }, LOOP_GAP_MS);
       }
     });
   }
 
   stopLoop(): void {
     this.isSpeaking = false;
-    if (this.loopInterval) {
-      clearTimeout(this.loopInterval);
-      this.loopInterval = null;
+    if (this.loopTimeout) {
+      clearTimeout(this.loopTimeout);
+      this.loopTimeout = null;
     }
+    this.removeFinishListener();
     Tts.stop();
-    Tts.removeAllListeners('tts-finish');
   }
 
   stop(): void {

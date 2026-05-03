@@ -20,6 +20,8 @@ class AlarmForegroundService : Service(), TextToSpeech.OnInitListener {
         const val NOTIFICATION_ID = 1001
         const val ACTION_STOP = "com.loud.alarm.ACTION_STOP"
         const val ACTION_SNOOZE = "com.loud.alarm.ACTION_SNOOZE"
+        const val LOOP_GAP_MS = 350L
+        const val RETRY_GAP_MS = 1000L
     }
 
     private var tts: TextToSpeech? = null
@@ -147,20 +149,20 @@ class AlarmForegroundService : Service(), TextToSpeech.OnInitListener {
                 Log.d(TAG, "TTS started speaking: $alarmText")
             }
             override fun onDone(utteranceId: String?) {
-                Log.d(TAG, "TTS finished speaking, will repeat in 2s")
+                Log.d(TAG, "TTS finished speaking, scheduling next repeat")
                 // Schedule next TTS after a short delay
                 ttsLoopRunnable = Runnable {
                     if (isTtsReady) {
                         speakText()
                     }
                 }
-                handler.postDelayed(ttsLoopRunnable!!, 2000)
+                handler.postDelayed(ttsLoopRunnable!!, LOOP_GAP_MS)
             }
             override fun onError(utteranceId: String?) {
                 Log.e(TAG, "TTS error on utterance")
                 handler.postDelayed({
                     if (isTtsReady) speakText()
-                }, 3000)
+                }, RETRY_GAP_MS)
             }
         })
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -20,11 +20,15 @@ export function AlarmRingScreen() {
   const route = useRoute<RouteProps>();
   const { alarmId, text, language } = route.params;
   const alarm = useAlarmStore(state => state.alarms.find(a => a.id === alarmId));
+  const markAlarmTriggered = useAlarmStore(state => state.markAlarmTriggered);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
+  const [isHandlingAction, setIsHandlingAction] = useState(false);
 
   useEffect(() => {
+    markAlarmTriggered(alarmId);
+
     // Start pulse animation
     const pulse = Animated.loop(
       Animated.sequence([
@@ -74,17 +78,29 @@ export function AlarmRingScreen() {
       shake.stop();
       ttsService.stopLoop();
     };
-  }, []);
+  }, [alarmId, language, markAlarmTriggered, pulseAnim, rotateAnim, text]);
 
   const handleStop = async () => {
+    if (isHandlingAction) return;
+    setIsHandlingAction(true);
     ttsService.stop();
-    await alarmService.stopAlarm();
+    try {
+      await alarmService.stopAlarm();
+    } finally {
+      setIsHandlingAction(false);
+    }
   };
 
   const handleSnooze = async () => {
+    if (isHandlingAction) return;
+    setIsHandlingAction(true);
     ttsService.stop();
     const snoozeDuration = alarm?.snoozeDuration ?? 5;
-    await alarmService.snoozeAlarm(alarmId, snoozeDuration, text, language);
+    try {
+      await alarmService.snoozeAlarm(alarmId, snoozeDuration, text, language);
+    } finally {
+      setIsHandlingAction(false);
+    }
   };
 
   const rotation = rotateAnim.interpolate({
@@ -118,20 +134,26 @@ export function AlarmRingScreen() {
 
       <View style={styles.buttonContainer}>
         <TouchableOpacity
-          style={styles.snoozeButton}
+          style={[styles.snoozeButton, isHandlingAction && styles.disabledButton]}
           onPress={handleSnooze}
+          disabled={isHandlingAction}
           activeOpacity={0.8}>
-          <Text style={styles.snoozeButtonText}>Snooze</Text>
+          <Text style={styles.snoozeButtonText}>
+            {isHandlingAction ? 'Working...' : 'Snooze'}
+          </Text>
           <Text style={styles.snoozeSubtext}>
             {alarm?.snoozeDuration ?? 5} min
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.stopButton}
+          style={[styles.stopButton, isHandlingAction && styles.disabledButton]}
           onPress={handleStop}
+          disabled={isHandlingAction}
           activeOpacity={0.8}>
-          <Text style={styles.stopButtonText}>Stop</Text>
+          <Text style={styles.stopButtonText}>
+            {isHandlingAction ? 'Working...' : 'Stop'}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -203,6 +225,9 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingVertical: 18,
     alignItems: 'center',
+  },
+  disabledButton: {
+    opacity: 0.7,
   },
   stopButtonText: {
     fontSize: 20,

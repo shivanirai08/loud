@@ -243,6 +243,18 @@ class AlarmSchedulerModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun dismissAlarmActivity(promise: Promise) {
+        try {
+            currentActivity?.runOnUiThread {
+                currentActivity?.finish()
+                promise.resolve(true)
+            } ?: promise.resolve(false)
+        } catch (e: Exception) {
+            promise.reject("DISMISS_ACTIVITY_ERROR", e.message)
+        }
+    }
+
+    @ReactMethod
     fun canScheduleExactAlarms(promise: Promise) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val alarmManager = reactApplicationContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager

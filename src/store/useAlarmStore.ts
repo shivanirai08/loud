@@ -14,6 +14,7 @@ interface AlarmStore {
   updateAlarm: (id: string, data: AlarmFormData) => Promise<void>;
   deleteAlarm: (id: string) => Promise<void>;
   toggleAlarm: (id: string) => Promise<void>;
+  markAlarmTriggered: (id: string) => void;
   rescheduleAllAlarms: () => Promise<void>;
 }
 
@@ -121,6 +122,28 @@ export const useAlarmStore = create<AlarmStore>((set, get) => ({
         await alarmService.cancelAlarm(id);
       }
     }
+
+    set({ alarms });
+    persistAlarms(alarms);
+  },
+
+  markAlarmTriggered: (id: string) => {
+    const existingAlarm = get().alarms.find(alarm => alarm.id === id);
+    if (!existingAlarm || existingAlarm.repeat !== 'once' || !existingAlarm.enabled) {
+      return;
+    }
+
+    const alarms = get().alarms.map(alarm => {
+      if (alarm.id === id) {
+        return {
+          ...alarm,
+          enabled: false,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
+      return alarm;
+    });
 
     set({ alarms });
     persistAlarms(alarms);
